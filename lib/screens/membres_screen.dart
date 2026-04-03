@@ -58,13 +58,29 @@ class _MembresScreenState extends State<MembresScreen> {
   }
 
   Future<void> _ajouterMembre() async {
+    final provider = Provider.of<TontineProvider>(context, listen: false);
+    final tontine = provider.tontineSelectionnee;
+
+    // --- VÉRIFICATION DU QUOTA ---
+    if (tontine != null) {
+      if (provider.membres.length >= tontine.membres) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Limite atteinte ! Cette tontine est limitée à ${tontine.membres} membres.'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return; // On arrête l'exécution ici
+      }
+    }
+
     final result = await showDialog<Membre>(
       context: context,
       builder: (context) => AjoutMembreDialog(tontineId: widget.tontineId),
     );
 
     if (result != null) {
-      final provider = Provider.of<TontineProvider>(context, listen: false);
       try {
         await provider.ajouterMembre(widget.tontineId, result);
         await _chargerMembres();
@@ -112,10 +128,22 @@ class _MembresScreenState extends State<MembresScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TontineProvider>(context);
+    final tontine = provider.tontineSelectionnee;
+    final nbMembresActuels = provider.membres.length;
+    final nbMax = tontine?.membres ?? 0;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Membres - ${widget.tontineNom}'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Membres - ${widget.tontineNom}', style: const TextStyle(fontSize: 16)),
+            Text(
+              '$nbMembresActuels / $nbMax places occupées',
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+          ],
+        ),
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
         actions: [
@@ -162,7 +190,7 @@ class _MembresScreenState extends State<MembresScreen> {
                     style: const TextStyle(fontSize: 18),
                   ),
                   const SizedBox(height: 16),
-                  if (widget.isAdmin)
+                  if (widget.isAdmin && nbMembresActuels < nbMax)
                     ElevatedButton.icon(
                       onPressed: _ajouterMembre,
                       icon: const Icon(Icons.person_add),
@@ -186,7 +214,7 @@ class _MembresScreenState extends State<MembresScreen> {
                     leading: CircleAvatar(
                       backgroundColor: Colors.green,
                       child: Text(
-                        membre.prenom[0].toUpperCase(),
+                        membre.prenom.isNotEmpty ? membre.prenom[0].toUpperCase() : '?',
                         style: const TextStyle(color: Colors.white),
                       ),
                     ),
@@ -211,7 +239,7 @@ class _MembresScreenState extends State<MembresScreen> {
           ),
         ],
       ),
-      floatingActionButton: widget.isAdmin
+      floatingActionButton: (widget.isAdmin && nbMembresActuels < nbMax)
           ? FloatingActionButton(
         onPressed: _ajouterMembre,
         backgroundColor: Colors.green,
@@ -222,7 +250,7 @@ class _MembresScreenState extends State<MembresScreen> {
   }
 }
 
-// ========== DIALOGUE D'AJOUT DE MEMBRE ==========
+// ========== DIALOGUE D'AJOUT DE MEMBRE (Inchangé) ==========
 class AjoutMembreDialog extends StatefulWidget {
   final int tontineId;
 
@@ -264,12 +292,7 @@ class _AjoutMembreDialogState extends State<AjoutMembreDialog> {
                   labelText: 'Prénom *',
                   border: OutlineInputBorder(),
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Champ requis';
-                  }
-                  return null;
-                },
+                validator: (value) => (value == null || value.isEmpty) ? 'Champ requis' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -278,12 +301,7 @@ class _AjoutMembreDialogState extends State<AjoutMembreDialog> {
                   labelText: 'Nom *',
                   border: OutlineInputBorder(),
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Champ requis';
-                  }
-                  return null;
-                },
+                validator: (value) => (value == null || value.isEmpty) ? 'Champ requis' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -293,12 +311,7 @@ class _AjoutMembreDialogState extends State<AjoutMembreDialog> {
                   border: OutlineInputBorder(),
                 ),
                 keyboardType: TextInputType.phone,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Champ requis';
-                  }
-                  return null;
-                },
+                validator: (value) => (value == null || value.isEmpty) ? 'Champ requis' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -314,10 +327,7 @@ class _AjoutMembreDialogState extends State<AjoutMembreDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Annuler'),
-        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
         ElevatedButton(
           onPressed: () {
             if (_formKey.currentState!.validate()) {
@@ -333,10 +343,7 @@ class _AjoutMembreDialogState extends State<AjoutMembreDialog> {
               Navigator.pop(context, membre);
             }
           },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-          ),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
           child: const Text('Ajouter'),
         ),
       ],

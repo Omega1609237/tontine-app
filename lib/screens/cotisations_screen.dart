@@ -16,10 +16,15 @@ class CotisationsScreen extends StatefulWidget {
 class _CotisationsScreenState extends State<CotisationsScreen> {
   final _montantController = TextEditingController();
   int? _selectedMembreId;
-  String _modePaiement = 'Espèces';
+  final String _modePaiement = 'Espèces';
   bool _isSaving = false;
 
-  // Récupère le début de la période (jour, semaine, mois)
+  @override
+  void dispose() {
+    _montantController.dispose();
+    super.dispose();
+  }
+
   DateTime _getDebutPeriode() {
     final now = DateTime.now();
     switch (widget.tontine.frequence) {
@@ -34,7 +39,6 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
     }
   }
 
-  // Récupère la cotisation de la période actuelle pour un membre
   dynamic _getCotisationPeriode(int membreId) {
     final provider = Provider.of<TontineProvider>(context, listen: false);
     final debut = _getDebutPeriode();
@@ -59,28 +63,23 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
     if (montantSaisi <= 0) return _showMessage('Montant invalide', Colors.orange);
 
     final provider = Provider.of<TontineProvider>(context, listen: false);
-
-    // Récupère la cotisation de la période en cours
     final cotisationPeriode = _getCotisationPeriode(_selectedMembreId!);
     final dejaPaye = cotisationPeriode?.montant ?? 0.0;
     final nouveauTotal = dejaPaye + montantSaisi;
 
-    // Vérification du surplus
     if (nouveauTotal > widget.tontine.montant) {
-      return _showMessage('Impossible ! Le total dépasserait ${widget.tontine.montant.toInt()} FCFA', Colors.red);
+      return _showMessage('Impossible ! Max: ${widget.tontine.montant.toInt()} FCFA', Colors.red);
     }
 
     setState(() => _isSaving = true);
     try {
       if (cotisationPeriode != null) {
-        // Mise à jour de la cotisation existante
         await provider.modifierCotisation(cotisationPeriode.id!, nouveauTotal, _modePaiement);
       } else {
-        // Création d'une nouvelle cotisation
         await provider.ajouterCotisation(widget.tontine.id!, _selectedMembreId!, montantSaisi, _modePaiement);
       }
       _montantController.clear();
-      _selectedMembreId = null;
+      setState(() => _selectedMembreId = null);
       _showMessage('Paiement validé !', Colors.green);
     } catch (e) {
       _showMessage('Erreur: $e', Colors.red);
@@ -110,13 +109,11 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TontineProvider>(context);
-    final f = NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+    final f = NumberFormat.currency(locale: 'fr_FR', symbol: 'F', decimalDigits: 0);
     final debutPeriode = _getDebutPeriode();
 
-    // Filtrer les cotisations de la période actuelle
     final cotisationsPeriode = provider.cotisations.where((c) => c.datePaiement.isAfter(debutPeriode)).toList();
 
-    // Calculer les totaux pour la période
     double totalPaye = 0;
     for (var c in cotisationsPeriode) {
       totalPaye += c.montant;
@@ -126,22 +123,25 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
 
     String periodeTexte = '';
     switch (widget.tontine.frequence) {
-      case 'quotidienne': periodeTexte = "aujourd'hui"; break;
-      case 'hebdomadaire': periodeTexte = "cette semaine"; break;
-      case 'mensuelle': periodeTexte = "ce mois-ci"; break;
+      case 'quotidienne': periodeTexte = "Aujourd'hui"; break;
+      case 'hebdomadaire': periodeTexte = "Semaine"; break;
+      case 'mensuelle': periodeTexte = "Mois"; break;
     }
 
     return Scaffold(
+      // SOLUTION 1: resizeToAvoidBottomInset permet de gérer le clavier proprement
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        title: Text('${widget.tontine.nom} - ${periodeTexte.toUpperCase()}'),
+        title: Text('${widget.tontine.nom} - $periodeTexte'),
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
+        // Utilisation de BouncingScrollPhysics pour une sensation plus fluide sur mobile
+        physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Barre de progression de la période
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -154,12 +154,15 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
                       minHeight: 10,
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    // SOLUTION 2: Utiliser Wrap au lieu de Row pour éviter les pixels qui dépassent
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      spacing: 10,
+                      runSpacing: 5,
                       children: [
-                        Text('Objectif: ${f.format(objectif)}', style: const TextStyle(fontSize: 12)),
-                        Text('Collecté: ${f.format(totalPaye)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text('${(progression * 100).toStringAsFixed(1)}%'),
+                        Text('Obj: ${f.format(objectif)}', style: const TextStyle(fontSize: 11)),
+                        Text('Reçu: ${f.format(totalPaye)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                        Text('${(progression * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11)),
                       ],
                     ),
                   ],
@@ -168,13 +171,13 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Formulaire d'ajout (admin seulement)
             if (widget.isAdmin) Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
                     DropdownButtonFormField<int>(
+                      isExpanded: true, // Évite que le texte ne déborde dans le bouton
                       value: _selectedMembreId,
                       decoration: const InputDecoration(labelText: 'Membre'),
                       items: provider.membres.map((m) {
@@ -183,7 +186,10 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
                         final reste = widget.tontine.montant - dejaPaye;
                         return DropdownMenuItem(
                           value: m.id,
-                          child: Text('${m.nomComplet} (${reste <= 0 ? "Payé" : "Reste: ${reste.toInt()}"})'),
+                          child: Text(
+                            '${m.nomComplet} (${reste <= 0 ? "PAYÉ" : "Reste: ${reste.toInt()}"})',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         );
                       }).toList(),
                       onChanged: (v) => setState(() => _selectedMembreId = v),
@@ -191,16 +197,25 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _montantController,
-                      decoration: const InputDecoration(labelText: 'Montant à ajouter (FCFA)'),
+                      decoration: const InputDecoration(
+                        labelText: 'Montant à ajouter (FCFA)',
+                        hintText: 'Ex: 5000',
+                      ),
                       keyboardType: TextInputType.number,
                     ),
                     const SizedBox(height: 15),
                     SizedBox(
                       width: double.infinity,
+                      height: 45,
                       child: ElevatedButton(
                         onPressed: _isSaving ? null : _validerPaiement,
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                        child: _isSaving ? const CircularProgressIndicator() : const Text('VALIDER', style: TextStyle(color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: _isSaving
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Text('VALIDER LE PAIEMENT'),
                       ),
                     )
                   ],
@@ -209,11 +224,15 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Liste des cotisations de la période
-            Text('PAIEMENTS ${periodeTexte.toUpperCase()}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('HISTORIQUE DES PAIEMENTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
+            ),
             const SizedBox(height: 8),
+
             if (cotisationsPeriode.isEmpty)
               const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('Aucun paiement pour cette période'))),
+
             ListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -221,20 +240,25 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
               itemBuilder: (ctx, i) {
                 final c = cotisationsPeriode[i];
                 final reste = widget.tontine.montant - c.montant;
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: reste <= 0 ? Colors.green : Colors.orange,
-                    child: const Icon(Icons.person, color: Colors.white),
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: reste <= 0 ? Colors.green : Colors.orange,
+                      child: Icon(reste <= 0 ? Icons.check : Icons.access_time, color: Colors.white, size: 20),
+                    ),
+                    title: Text(c.membreNom, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    subtitle: Text('Reçu: ${f.format(c.montant)} | Reste: ${f.format(reste)}', style: const TextStyle(fontSize: 12)),
+                    trailing: widget.isAdmin ? IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      onPressed: () => _confirmerSuppression(c.id!),
+                    ) : null,
                   ),
-                  title: Text(c.membreNom),
-                  subtitle: Text('Payé: ${f.format(c.montant)} | Reste: ${f.format(reste)}'),
-                  trailing: widget.isAdmin ? IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () => _confirmerSuppression(c.id!),
-                  ) : null,
                 );
               },
-            )
+            ),
+            // Ajout d'un petit espace en bas pour ne pas coller au bord
+            const SizedBox(height: 50),
           ],
         ),
       ),
