@@ -50,7 +50,6 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
         actions: [
-          // Bouton d'export (visible pour tous)
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: () async {
@@ -61,7 +60,6 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
               );
             },
           ),
-          // Bouton Modifier (visible seulement pour les admins)
           if (isAdmin)
             IconButton(
               icon: const Icon(Icons.edit),
@@ -87,8 +85,9 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Carte d'informations
               Card(
+                elevation: 2,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -117,12 +116,12 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
                         valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
                         minHeight: 8,
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('Collecté: ${tontine.montantTotal} FCFA'),
-                          Text('Restant: ${tontine.montantRestant} FCFA'),
+                          Flexible(child: Text('Collecté: ${tontine.montantTotal} FCFA', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                          Flexible(child: Text('Restant: ${tontine.montantRestant} FCFA', style: const TextStyle(fontSize: 11, color: Colors.red))),
                         ],
                       ),
                     ],
@@ -131,11 +130,11 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
               ),
               const SizedBox(height: 20),
 
-              // Boutons d'action
+              // --- SECTION BOUTONS CORRIGÉE ---
               Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton.icon(
+                    child: ElevatedButton(
                       onPressed: () async {
                         await Navigator.push(
                           context,
@@ -149,18 +148,31 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
                         );
                         _chargerDonnees();
                       },
-                      icon: const Icon(Icons.people),
-                      label: Text('Membres (${provider.membres.length})'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.people, size: 16),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              'Membres (${provider.membres.length})',
+                              style: const TextStyle(fontSize: 10),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: ElevatedButton.icon(
+                    child: ElevatedButton(
                       onPressed: () async {
                         await Navigator.push(
                           context,
@@ -173,34 +185,61 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
                         );
                         _chargerDonnees();
                       },
-                      icon: const Icon(Icons.payment),
-                      label: Text('Cotisations (${provider.cotisations.length})'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.orange,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.payment, size: 16),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              'Cotiser (${provider.cotisations.length})',
+                              style: const TextStyle(fontSize: 10),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 24),
 
-              // Dernières cotisations
               if (provider.cotisations.isNotEmpty) ...[
                 const Text(
                   'Dernières cotisations',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 8),
-                ...provider.cotisations.take(3).map((cotisation) {
-                  return ListTile(
-                    leading: const Icon(Icons.payment, color: Colors.green),
-                    title: Text(cotisation.membreNom),
-                    subtitle: Text('${cotisation.montant} FCFA - ${cotisation.datePaiement.day}/${cotisation.datePaiement.month}'),
-                    trailing: Text(cotisation.modePaiement ?? ''),
-                  );
-                }),
+                const SizedBox(height: 12),
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: provider.cotisations.length > 3 ? 3 : provider.cotisations.length,
+                  itemBuilder: (context, index) {
+                    final cotisation = provider.cotisations[index];
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          backgroundColor: Colors.green,
+                          child: Icon(Icons.check, color: Colors.white, size: 20),
+                        ),
+                        title: Text(cotisation.membreNom, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text('${cotisation.montant} FCFA • ${cotisation.datePaiement.day}/${cotisation.datePaiement.month}'),
+                        trailing: Text(
+                          cotisation.modePaiement ?? '',
+                          style: const TextStyle(fontSize: 10, fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ],
             ],
           ),
@@ -209,18 +248,24 @@ class _DetailsTontineScreenState extends State<DetailsTontineScreen> {
     );
   }
 
+  // --- MÉTHODE _buildInfoRow CORRIGÉE ---
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           Icon(icon, size: 20, color: Colors.green),
-          const SizedBox(width: 16),
+          const SizedBox(width: 12),
           SizedBox(
             width: 80,
-            child: Text(label, style: const TextStyle(color: Colors.grey)),
+            child: Text(label, style: const TextStyle(color: Colors.grey, fontSize: 13)),
           ),
-          Expanded(child: Text(value)),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+            ),
+          ),
         ],
       ),
     );
