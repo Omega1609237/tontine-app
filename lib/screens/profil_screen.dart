@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/auth_service.dart';
+import '../services/api_service.dart';
 import '../models/utilisateur.dart';
 import '../providers/theme_provider.dart';
 
@@ -18,8 +19,11 @@ class _ProfilScreenState extends State<ProfilScreen> {
   late TextEditingController _nomController;
   late TextEditingController _emailController;
   late TextEditingController _telephoneController;
+
   bool _isEditing = false;
   bool _isLoading = false;
+  bool _isUploading = false;
+
   File? _selectedImage;
   String? _currentPhotoUrl;
 
@@ -28,6 +32,10 @@ class _ProfilScreenState extends State<ProfilScreen> {
   @override
   void initState() {
     super.initState();
+    _chargerDonneesUtilisateur();
+  }
+
+  void _chargerDonneesUtilisateur() {
     final user = AuthService().currentUser;
     _nomController = TextEditingController(text: user?.nom ?? '');
     _emailController = TextEditingController(text: user?.email ?? '');
@@ -58,50 +66,76 @@ class _ProfilScreenState extends State<ProfilScreen> {
         });
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur lors de la sélection: $e'), backgroundColor: Colors.red),
-      );
+      _showSnackBar('Erreur lors de la sélection : $e', Colors.red);
     }
   }
 
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: color),
+    );
+  }
+
   Future<void> _saveProfile() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
+    if (!_formKey.currentState!.validate()) return;
 
-      final auth = AuthService();
-      final currentUser = auth.currentUser;
+    setState(() => _isLoading = true);
+    final auth = AuthService();
+    final currentUser = auth.currentUser;
 
-      if (currentUser != null) {
+    if (currentUser != null) {
+      try {
+        String? photoUrl = _currentPhotoUrl;
+
+        // 1. Gérer l'upload si une nouvelle image est sélectionnée
+        if (_selectedImage != null) {
+          setState(() => _isUploading = true);
+          final uploadedUrl = await ApiService.uploadImage(_selectedImage!);
+          setState(() => _isUploading = false);
+
+          if (uploadedUrl != null) {
+            // Si l'URL renvoyée est partielle, on peut la compléter ici
+            photoUrl = uploadedUrl.startsWith('http')
+                ? uploadedUrl
+                : "${ApiService.baseUrl.replaceAll('/api', '')}/uploads/$uploadedUrl";
+          }
+        }
+
+        // 2. Préparer l'objet utilisateur mis à jour
         final updatedUser = Utilisateur(
           id: currentUser.id,
-          nom: _nomController.text,
-          email: _emailController.text,
+          nom: _nomController.text.trim(),
+          email: _emailController.text.trim(),
           password: currentUser.password,
-          telephone: _telephoneController.text.isNotEmpty ? _telephoneController.text : null,
+          telephone: _telephoneController.text.trim().isNotEmpty ? _telephoneController.text.trim() : null,
           role: currentUser.role,
           dateCreation: currentUser.dateCreation,
-          photoUrl: _selectedImage?.path ?? _currentPhotoUrl,
+          photoUrl: photoUrl,
         );
 
-        // Ici vous devrez implémenter la mise à jour via API
-        // Pour l'instant, on simule
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Profil mis à jour avec succès'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        setState(() {
-          _isEditing = false;
-          if (_selectedImage != null) {
-            _currentPhotoUrl = _selectedImage!.path;
+        // 3. Envoyer les modifications au serveur
+        final success = await ApiService.updateUser(updatedUser);
+
+        if (success && mounted) {
+          // IMPORTANT : Re-synchroniser le service d'authentification avec les nouvelles infos
+          await auth.init();
+
+          setState(() {
+            _isEditing = false;
+            _currentPhotoUrl = auth.currentUser?.photoUrl;
             _selectedImage = null;
-          }
-        });
-      }
+          });
 
-      setState(() => _isLoading = false);
+          _showSnackBar('Profil mis à jour avec succès', Colors.green);
+        } else {
+          _showSnackBar('Échec de la mise à jour sur le serveur', Colors.red);
+        }
+      } catch (e) {
+        _showSnackBar('Erreur : $e', Colors.red);
+      }
     }
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
   @override
@@ -109,6 +143,9 @@ class _ProfilScreenState extends State<ProfilScreen> {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final user = AuthService().currentUser;
     final isAdmin = user?.isAdmin ?? false;
+
+    // Générer un timestamp pour forcer le rafraîchissement du cache de l'image
+    final String cacheBuster = DateTime.now().millisecondsSinceEpoch.toString();
 
     return Scaffold(
       appBar: AppBar(
@@ -121,13 +158,7 @@ class _ProfilScreenState extends State<ProfilScreen> {
             onPressed: () {
               setState(() {
                 _isEditing = !_isEditing;
-                if (!_isEditing) {
-                  // Réinitialiser les valeurs
-                  _nomController.text = user?.nom ?? '';
-                  _emailController.text = user?.email ?? '';
-                  _telephoneController.text = user?.telephone ?? '';
-                  _selectedImage = null;
-                }
+                if (!_isEditing) _chargerDonneesUtilisateur();
               });
             },
           ),
@@ -141,7 +172,6 @@ class _ProfilScreenState extends State<ProfilScreen> {
           key: _formKey,
           child: Column(
             children: [
-              // Avatar avec photo
               Center(
                 child: Stack(
                   children: [
@@ -158,23 +188,19 @@ class _ProfilScreenState extends State<ProfilScreen> {
                         )
                             : (_currentPhotoUrl != null && _currentPhotoUrl!.isNotEmpty
                             ? DecorationImage(
-                          image: FileImage(File(_currentPhotoUrl!)),
+                          image: NetworkImage('$_currentPhotoUrl?t=$cacheBuster'),
                           fit: BoxFit.cover,
                         )
                             : null),
                         color: Colors.green[100],
                       ),
-                      child: (_selectedImage == null && _currentPhotoUrl == null)
+                      child: (_selectedImage == null && (_currentPhotoUrl == null || _currentPhotoUrl!.isEmpty))
                           ? const Center(
-                        child: Icon(
-                          Icons.person,
-                          size: 60,
-                          color: Colors.green,
-                        ),
+                        child: Icon(Icons.person, size: 60, color: Colors.green),
                       )
                           : null,
                     ),
-                    if (_isEditing)
+                    if (_isEditing && !_isUploading)
                       Positioned(
                         bottom: 0,
                         right: 0,
@@ -187,11 +213,21 @@ class _ProfilScreenState extends State<ProfilScreen> {
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.white, width: 2),
                             ),
-                            child: const Icon(
-                              Icons.camera_alt,
-                              size: 20,
-                              color: Colors.white,
-                            ),
+                            child: const Icon(Icons.camera_alt, size: 20, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    if (_isUploading)
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle),
+                          child: const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           ),
                         ),
                       ),
@@ -199,8 +235,6 @@ class _ProfilScreenState extends State<ProfilScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-
-              // Informations
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -236,8 +270,6 @@ class _ProfilScreenState extends State<ProfilScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Informations supplémentaires
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -250,27 +282,19 @@ class _ProfilScreenState extends State<ProfilScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // Bouton de sauvegarde
               if (_isEditing)
                 SizedBox(
                   width: double.infinity,
                   height: 50,
                   child: ElevatedButton(
-                    onPressed: _saveProfile,
+                    onPressed: _isUploading ? null : _saveProfile,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
-                    child: const Text(
-                      'ENREGISTRER LES MODIFICATIONS',
-                      style: TextStyle(fontSize: 16),
-                    ),
+                    child: const Text('ENREGISTRER LES MODIFICATIONS'),
                   ),
                 ),
             ],
@@ -294,22 +318,12 @@ class _ProfilScreenState extends State<ProfilScreen> {
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, color: Colors.green),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
         filled: true,
         fillColor: themeProvider.isDarkMode ? Colors.grey[800] : Colors.grey[100],
       ),
       keyboardType: keyboardType,
-      validator: (value) {
-        if (label == 'Nom' && (value == null || value.isEmpty)) {
-          return 'Champ requis';
-        }
-        if (label == 'Email' && (value == null || value.isEmpty)) {
-          return 'Champ requis';
-        }
-        return null;
-      },
+      validator: (value) => (value == null || value.isEmpty) ? 'Champ requis' : null,
     );
   }
 
@@ -320,19 +334,8 @@ class _ProfilScreenState extends State<ProfilScreen> {
         children: [
           Icon(icon, size: 20, color: Colors.green),
           const SizedBox(width: 16),
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: const TextStyle(color: Colors.grey),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.w500),
-            ),
-          ),
+          SizedBox(width: 120, child: Text(label, style: const TextStyle(color: Colors.grey))),
+          Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.bold))),
         ],
       ),
     );
@@ -340,6 +343,6 @@ class _ProfilScreenState extends State<ProfilScreen> {
 
   String _formatDate(DateTime? date) {
     if (date == null) return 'Non disponible';
-    return '${date.day}/${date.month}/${date.year}';
+    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 }

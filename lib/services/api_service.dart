@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/utilisateur.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:3000/api';
+  static const String baseUrl = 'https://tontine-backend-1-5fe3.onrender.com/api';
   static String? _token;
 
   static Future<void> setToken(String token) async {
@@ -22,6 +24,7 @@ class ApiService {
   static Map<String, String> _getHeaders() {
     return {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
       if (_token != null) 'Authorization': 'Bearer $_token',
     };
   }
@@ -37,12 +40,9 @@ class ApiService {
         'email': email,
         'password': password,
         'telephone': telephone,
-        'role': role,  // Ajout du rôle
+        'role': role,
       }),
     );
-
-    print('📡 POST register - Status: ${response.statusCode}');
-    print('📡 Response: ${response.body}');
 
     if (response.statusCode == 200) {
       final Map<String, dynamic> data = jsonDecode(response.body);
@@ -58,9 +58,6 @@ class ApiService {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
     );
-
-    print('📡 POST login - Status: ${response.statusCode}');
-    print('📡 Response: ${response.body}');
 
     if (response.statusCode == 200) {
       final Map<String, dynamic> data = jsonDecode(response.body);
@@ -78,27 +75,58 @@ class ApiService {
 
   // ========== UTILISATEUR ==========
   static Future<Map<String, dynamic>> getCurrentUser() async {
-    final token = await getToken();
-    if (token == null || token.isEmpty) {
-      throw Exception('Non authentifié');
-    }
-
     final response = await http.get(
       Uri.parse('$baseUrl/me'),
       headers: _getHeaders(),
     );
 
-    print('📡 GET /me - Status: ${response.statusCode}');
-    print('📡 Response: ${response.body}');
-
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
-    } else if (response.statusCode == 401) {
-      await logout();
-      throw Exception('Session expirée');
-    } else {
-      throw Exception('Erreur chargement utilisateur: ${response.body}');
     }
+    throw Exception('Erreur chargement utilisateur');
+  }
+
+  // ========== UPLOAD IMAGE ==========
+  static Future<String?> uploadImage(File image) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/upload'),
+      );
+
+      final token = await getToken();
+      request.headers['Authorization'] = 'Bearer $token';
+
+      request.files.add(
+        await http.MultipartFile.fromPath('image', image.path),
+      );
+
+      final response = await request.send();
+      final responseData = await response.stream.bytesToString();
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(responseData);
+        return data['imageUrl'];
+      }
+      return null;
+    } catch (e) {
+      print('❌ Erreur upload: $e');
+      return null;
+    }
+  }
+
+  static Future<bool> updateUser(Utilisateur user) async {
+    final response = await http.put(
+      Uri.parse('$baseUrl/users/${user.id}'),
+      headers: _getHeaders(),
+      body: jsonEncode({
+        'nom': user.nom,
+        'email': user.email,
+        'telephone': user.telephone,
+        'photo_url': user.photoUrl,
+      }),
+    );
+    return response.statusCode == 200;
   }
 
   // ========== TONTINES ==========
@@ -108,12 +136,10 @@ class ApiService {
       headers: _getHeaders(),
     );
 
-    print('📡 GET tontines - Status: ${response.statusCode}');
-
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     }
-    throw Exception('Erreur chargement tontines: ${response.body}');
+    throw Exception('Erreur chargement tontines');
   }
 
   static Future<Map<String, dynamic>> createTontine(Map<String, dynamic> data) async {
@@ -123,12 +149,10 @@ class ApiService {
       body: jsonEncode(data),
     );
 
-    print('📡 POST tontine - Status: ${response.statusCode}');
-
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     }
-    throw Exception('Erreur création tontine: ${response.body}');
+    throw Exception('Erreur création tontine');
   }
 
   static Future<Map<String, dynamic>> updateTontine(int id, Map<String, dynamic> data) async {
@@ -216,6 +240,27 @@ class ApiService {
       return jsonDecode(response.body);
     }
     throw Exception('Erreur création cotisation');
+  }
+
+  static Future<Map<String, dynamic>> updateCotisation(int id, Map<String, dynamic> data) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/cotisations/$id'),
+        headers: _getHeaders(),
+        body: jsonEncode(data),
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body);
+      } else {
+        print("📊 Statut Erreur: ${response.statusCode}");
+        print("📝 Réponse Serveur: ${response.body}");
+        throw 'Erreur ${response.statusCode}';
+      }
+    } catch (e) {
+      print('❌ Erreur détaillée dans updateCotisation: $e');
+      rethrow;
+    }
   }
 
   static Future<void> deleteCotisation(int id) async {

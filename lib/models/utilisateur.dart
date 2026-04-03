@@ -6,7 +6,7 @@ class Utilisateur {
   final String? telephone;
   String role;
   final DateTime dateCreation;
-  String? photoUrl;  // AJOUTER CETTE LIGNE
+  String? photoUrl;
 
   Utilisateur({
     this.id,
@@ -16,7 +16,7 @@ class Utilisateur {
     this.telephone,
     this.role = 'membre',
     required this.dateCreation,
-    this.photoUrl,  // AJOUTER
+    this.photoUrl,
   });
 
   factory Utilisateur.fromJson(Map<String, dynamic> json) {
@@ -30,7 +30,7 @@ class Utilisateur {
       dateCreation: json['date_creation'] != null
           ? DateTime.parse(json['date_creation'])
           : DateTime.now(),
-      photoUrl: json['photoUrl'],  // AJOUTER
+      photoUrl: json['photo_url'],
     );
   }
 
@@ -43,7 +43,7 @@ class Utilisateur {
       'telephone': telephone,
       'role': role,
       'date_creation': dateCreation.toIso8601String(),
-      'photoUrl': photoUrl,  // AJOUTER
+      'photo_url': photoUrl,
     };
   }
 

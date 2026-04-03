@@ -3,17 +3,11 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/tontine.dart';
 import '../providers/tontine_provider.dart';
-import '../services/auth_service.dart';
 
 class CotisationsScreen extends StatefulWidget {
   final Tontine tontine;
-  final bool isAdmin; // Ajouter ce paramètre
-
-  const CotisationsScreen({
-    super.key,
-    required this.tontine,
-    required this.isAdmin, // Ajouter
-  });
+  final bool isAdmin;
+  const CotisationsScreen({super.key, required this.tontine, required this.isAdmin});
 
   @override
   State<CotisationsScreen> createState() => _CotisationsScreenState();
@@ -23,258 +17,227 @@ class _CotisationsScreenState extends State<CotisationsScreen> {
   final _montantController = TextEditingController();
   int? _selectedMembreId;
   String _modePaiement = 'Espèces';
-  bool _isLoading = false;
-  final List<String> _modesPaiement = ['Espèces', 'Mobile Money', 'Virement'];
+  bool _isSaving = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _chargerDonnees();
+  // Récupère le début de la période (jour, semaine, mois)
+  DateTime _getDebutPeriode() {
+    final now = DateTime.now();
+    switch (widget.tontine.frequence) {
+      case 'quotidienne':
+        return DateTime(now.year, now.month, now.day);
+      case 'hebdomadaire':
+        return now.subtract(Duration(days: now.weekday - 1));
+      case 'mensuelle':
+        return DateTime(now.year, now.month, 1);
+      default:
+        return now;
+    }
   }
 
-  Future<void> _chargerDonnees() async {
-    setState(() => _isLoading = true);
+  // Récupère la cotisation de la période actuelle pour un membre
+  dynamic _getCotisationPeriode(int membreId) {
     final provider = Provider.of<TontineProvider>(context, listen: false);
-    await provider.chargerMembres(widget.tontine.id!);
-    await provider.chargerCotisations(widget.tontine.id!);
-    setState(() => _isLoading = false);
+    final debut = _getDebutPeriode();
+    try {
+      return provider.cotisations.firstWhere((c) =>
+      c.membreId == membreId &&
+          c.datePaiement.isAfter(debut));
+    } catch (e) {
+      return null;
+    }
   }
 
-  Future<void> _ajouterCotisation() async {
-    if (_selectedMembreId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sélectionnez un membre'), backgroundColor: Colors.orange),
-      );
-      return;
-    }
-
-    final montant = double.tryParse(_montantController.text);
-    if (montant == null || montant <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Montant invalide'), backgroundColor: Colors.orange),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    final provider = Provider.of<TontineProvider>(context, listen: false);
-    await provider.ajouterCotisation(
-      widget.tontine.id!,
-      _selectedMembreId!,
-      montant,
-      _modePaiement,
-    );
-
-    _montantController.clear();
-    _selectedMembreId = null;
-
+  void _showMessage(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Cotisation ajoutée'), backgroundColor: Colors.green),
+      SnackBar(content: Text(msg), backgroundColor: color, behavior: SnackBarBehavior.floating),
     );
-
-    await _chargerDonnees();
-    setState(() => _isLoading = false);
   }
 
-  Future<void> _supprimerCotisation(int id) async {
-    final confirm = await showDialog<bool>(
+  Future<void> _validerPaiement() async {
+    if (_selectedMembreId == null) return _showMessage('Sélectionnez un membre', Colors.orange);
+    final montantSaisi = double.tryParse(_montantController.text) ?? 0;
+    if (montantSaisi <= 0) return _showMessage('Montant invalide', Colors.orange);
+
+    final provider = Provider.of<TontineProvider>(context, listen: false);
+
+    // Récupère la cotisation de la période en cours
+    final cotisationPeriode = _getCotisationPeriode(_selectedMembreId!);
+    final dejaPaye = cotisationPeriode?.montant ?? 0.0;
+    final nouveauTotal = dejaPaye + montantSaisi;
+
+    // Vérification du surplus
+    if (nouveauTotal > widget.tontine.montant) {
+      return _showMessage('Impossible ! Le total dépasserait ${widget.tontine.montant.toInt()} FCFA', Colors.red);
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      if (cotisationPeriode != null) {
+        // Mise à jour de la cotisation existante
+        await provider.modifierCotisation(cotisationPeriode.id!, nouveauTotal, _modePaiement);
+      } else {
+        // Création d'une nouvelle cotisation
+        await provider.ajouterCotisation(widget.tontine.id!, _selectedMembreId!, montantSaisi, _modePaiement);
+      }
+      _montantController.clear();
+      _selectedMembreId = null;
+      _showMessage('Paiement validé !', Colors.green);
+    } catch (e) {
+      _showMessage('Erreur: $e', Colors.red);
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _confirmerSuppression(int id) async {
+    final bool? confirm = await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirmation'),
-        content: const Text('Supprimer cette cotisation ?'),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirmer'),
+        content: const Text('Voulez-vous vraiment supprimer cette cotisation ?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Supprimer'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('NON')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('OUI', style: TextStyle(color: Colors.red))),
         ],
       ),
     );
-
     if (confirm == true) {
-      final provider = Provider.of<TontineProvider>(context, listen: false);
-      await provider.supprimerCotisation(id);
-      await _chargerDonnees();
+      await Provider.of<TontineProvider>(context, listen: false).supprimerCotisation(id);
+      _showMessage('Supprimé avec succès', Colors.green);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TontineProvider>(context);
-    final formatteur = NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+    final f = NumberFormat.currency(locale: 'fr_FR', symbol: 'FCFA', decimalDigits: 0);
+    final debutPeriode = _getDebutPeriode();
 
-    double totalPaye = provider.cotisations.fold(0, (sum, c) => sum + c.montant);
-    double objectifTotal = widget.tontine.montant * widget.tontine.membres;
-    double progression = objectifTotal > 0 ? (totalPaye / objectifTotal * 100) : 0;
+    // Filtrer les cotisations de la période actuelle
+    final cotisationsPeriode = provider.cotisations.where((c) => c.datePaiement.isAfter(debutPeriode)).toList();
+
+    // Calculer les totaux pour la période
+    double totalPaye = 0;
+    for (var c in cotisationsPeriode) {
+      totalPaye += c.montant;
+    }
+    double objectif = widget.tontine.montant * widget.tontine.membres;
+    double progression = objectif > 0 ? (totalPaye / objectif).clamp(0.0, 1.0) : 0;
+
+    String periodeTexte = '';
+    switch (widget.tontine.frequence) {
+      case 'quotidienne': periodeTexte = "aujourd'hui"; break;
+      case 'hebdomadaire': periodeTexte = "cette semaine"; break;
+      case 'mensuelle': periodeTexte = "ce mois-ci"; break;
+    }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Cotisations - ${widget.tontine.nom}'),
+        title: Text('${widget.tontine.nom} - ${periodeTexte.toUpperCase()}'),
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
       ),
-      body: Column(
-        children: [
-          // Barre de progression
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Barre de progression de la période
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
                   children: [
-                    Text('Progression: ${progression.toStringAsFixed(1)}%'),
-                    Text('${provider.cotisations.length} cotisations'),
+                    LinearProgressIndicator(
+                      value: progression,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: const AlwaysStoppedAnimation(Colors.green),
+                      minHeight: 10,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Objectif: ${f.format(objectif)}', style: const TextStyle(fontSize: 12)),
+                        Text('Collecté: ${f.format(totalPaye)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text('${(progression * 100).toStringAsFixed(1)}%'),
+                      ],
+                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value: progression / 100,
-                  backgroundColor: Colors.grey[200],
-                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
-                  minHeight: 8,
-                ),
-              ],
+              ),
             ),
-          ),
-          const Divider(),
+            const SizedBox(height: 16),
 
-          // Formulaire d'ajout (UNIQUEMENT POUR LES ADMINS)
-          if (widget.isAdmin)
-            Card(
-              margin: const EdgeInsets.all(16),
+            // Formulaire d'ajout (admin seulement)
+            if (widget.isAdmin) Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
                     DropdownButtonFormField<int>(
                       value: _selectedMembreId,
-                      decoration: const InputDecoration(
-                        labelText: 'Membre *',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person),
-                      ),
-                      items: provider.membres.map((membre) {
+                      decoration: const InputDecoration(labelText: 'Membre'),
+                      items: provider.membres.map((m) {
+                        final cotisationPeriode = _getCotisationPeriode(m.id!);
+                        final dejaPaye = cotisationPeriode?.montant ?? 0;
+                        final reste = widget.tontine.montant - dejaPaye;
                         return DropdownMenuItem(
-                          value: membre.id,
-                          child: Text(membre.nomComplet),
+                          value: m.id,
+                          child: Text('${m.nomComplet} (${reste <= 0 ? "Payé" : "Reste: ${reste.toInt()}"})'),
                         );
                       }).toList(),
-                      onChanged: (value) => setState(() => _selectedMembreId = value),
+                      onChanged: (v) => setState(() => _selectedMembreId = v),
                     ),
                     const SizedBox(height: 12),
-                    TextFormField(
+                    TextField(
                       controller: _montantController,
-                      decoration: const InputDecoration(
-                        labelText: 'Montant (FCFA) *',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.money),
-                      ),
+                      decoration: const InputDecoration(labelText: 'Montant à ajouter (FCFA)'),
                       keyboardType: TextInputType.number,
                     ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      value: _modePaiement,
-                      decoration: const InputDecoration(
-                        labelText: 'Mode de paiement',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.payment),
-                      ),
-                      items: _modesPaiement.map((mode) {
-                        return DropdownMenuItem(value: mode, child: Text(mode));
-                      }).toList(),
-                      onChanged: (value) => setState(() => _modePaiement = value!),
-                    ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 15),
                     SizedBox(
                       width: double.infinity,
-                      height: 45,
                       child: ElevatedButton(
-                        onPressed: _isLoading ? null : _ajouterCotisation,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                        child: _isLoading
-                            ? const CircularProgressIndicator(color: Colors.white)
-                            : const Text('AJOUTER LA COTISATION'),
+                        onPressed: _isSaving ? null : _validerPaiement,
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                        child: _isSaving ? const CircularProgressIndicator() : const Text('VALIDER', style: TextStyle(color: Colors.white)),
                       ),
-                    ),
+                    )
                   ],
                 ),
               ),
             ),
+            const SizedBox(height: 20),
 
-          // Liste des cotisations
-          Expanded(
-            child: provider.isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : provider.cotisations.isEmpty
-                ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.payment_outlined, size: 80, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text('Aucune cotisation'),
-                ],
-              ),
-            )
-                : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: provider.cotisations.length,
-              itemBuilder: (context, index) {
-                final c = provider.cotisations[index];
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.green,
-                      child: Text(
-                        c.membreNom[0].toUpperCase(),
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ),
-                    title: Text(c.membreNom),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${formatteur.format(c.montant)}'),
-                        Text('Le ${c.datePaiement.day}/${c.datePaiement.month}/${c.datePaiement.year}'),
-                        if (c.modePaiement != null)
-                          Text('Mode: ${c.modePaiement}'),
-                      ],
-                    ),
-                    // Le bouton Supprimer n'apparaît que pour les admins
-                    trailing: widget.isAdmin
-                        ? IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _supprimerCotisation(c.id!),
-                    )
-                        : null,
+            // Liste des cotisations de la période
+            Text('PAIEMENTS ${periodeTexte.toUpperCase()}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            if (cotisationsPeriode.isEmpty)
+              const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('Aucun paiement pour cette période'))),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: cotisationsPeriode.length,
+              itemBuilder: (ctx, i) {
+                final c = cotisationsPeriode[i];
+                final reste = widget.tontine.montant - c.montant;
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: reste <= 0 ? Colors.green : Colors.orange,
+                    child: const Icon(Icons.person, color: Colors.white),
                   ),
+                  title: Text(c.membreNom),
+                  subtitle: Text('Payé: ${f.format(c.montant)} | Reste: ${f.format(reste)}'),
+                  trailing: widget.isAdmin ? IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () => _confirmerSuppression(c.id!),
+                  ) : null,
                 );
               },
-            ),
-          ),
-        ],
+            )
+          ],
+        ),
       ),
-      floatingActionButton: widget.isAdmin
-          ? FloatingActionButton(
-        onPressed: () {
-          // Rien, le formulaire est déjà visible
-        },
-        backgroundColor: Colors.green,
-        child: const Icon(Icons.add),
-      )
-          : null,
     );
   }
 }

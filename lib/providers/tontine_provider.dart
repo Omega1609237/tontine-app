@@ -39,10 +39,8 @@ class TontineProvider extends ChangeNotifier {
       final data = await ApiService.getTontines();
       _tontines = data.map((json) => Tontine.fromJson(json)).toList();
       _error = null;
-      print('✅ ${_tontines.length} tontine(s) chargée(s)');
     } catch (e) {
       _error = e.toString();
-      print('❌ Erreur chargerTontines: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -55,18 +53,14 @@ class TontineProvider extends ChangeNotifier {
 
     try {
       final data = await ApiService.createTontine(tontine.toJson());
-      final nouvelleTontine = Tontine.fromJson(data);
-      _tontines.add(nouvelleTontine);
+      _tontines.add(Tontine.fromJson(data));
       _error = null;
-      print('✅ Tontine ajoutée: ${nouvelleTontine.nom}');
-      // Mettre à jour les statistiques après ajout
-      await chargerStatistiques();
     } catch (e) {
       _error = e.toString();
-      print('❌ Erreur ajouterTontine: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
+      await chargerStatistiques();
     }
   }
 
@@ -108,10 +102,8 @@ class TontineProvider extends ChangeNotifier {
       final data = await ApiService.getMembres(tontineId);
       _membres = data.map((json) => Membre.fromJson(json)).toList();
       _error = null;
-      print('✅ ${_membres.length} membre(s) chargé(s) pour tontine $tontineId');
     } catch (e) {
       _error = e.toString();
-      print('❌ Erreur chargerMembres: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -119,20 +111,14 @@ class TontineProvider extends ChangeNotifier {
   }
 
   Future<void> ajouterMembre(int tontineId, Membre membre) async {
-    print('➕ Ajout membre dans provider pour tontine $tontineId');
     try {
       final data = await ApiService.createMembre(tontineId, membre.toJson());
       _membres.add(Membre.fromJson(data));
       _error = null;
       notifyListeners();
-      // Mettre à jour les statistiques après ajout
       await chargerStatistiques();
-      // Recharger les tontines pour mettre à jour le nombre de membres
-      await chargerTontines();
-      print('✅ Membre ajouté avec succès');
     } catch (e) {
       _error = e.toString();
-      print('❌ Erreur ajout membre: $e');
       notifyListeners();
     }
   }
@@ -144,7 +130,6 @@ class TontineProvider extends ChangeNotifier {
       _error = null;
       notifyListeners();
       await chargerStatistiques();
-      await chargerTontines();
     } catch (e) {
       _error = e.toString();
       notifyListeners();
@@ -178,12 +163,44 @@ class TontineProvider extends ChangeNotifier {
       _cotisations.add(Cotisation.fromJson(data));
       _error = null;
       notifyListeners();
-      // Mettre à jour les statistiques après ajout
-      await chargerStatistiques();
       await chargerTontines();
+      await chargerStatistiques();
     } catch (e) {
       _error = e.toString();
       notifyListeners();
+    }
+  }
+
+  // ========== NOUVELLE MÉTHODE ==========
+  // Modifier une cotisation existante (supprimer + recréer)
+  Future<void> modifierCotisation(int id, double nouveauMontant, String modePaiement) async {
+    try {
+      // 1. Récupérer l'ancienne cotisation
+      final ancienne = _cotisations.firstWhere((c) => c.id == id);
+
+      // 2. Supprimer l'ancienne cotisation
+      await ApiService.deleteCotisation(id);
+
+      // 3. Créer une nouvelle cotisation avec le nouveau montant
+      await ApiService.createCotisation(ancienne.tontineId, {
+        'membre_id': ancienne.membreId,
+        'montant': nouveauMontant,
+        'mode_paiement': modePaiement,
+      });
+
+      // 4. Recharger les données
+      await chargerCotisations(ancienne.tontineId);
+      await chargerTontines();
+      await chargerStatistiques();
+
+      _error = null;
+      notifyListeners();
+      print('✅ Cotisation modifiée avec succès');
+
+    } catch (e) {
+      _error = e.toString();
+      notifyListeners();
+      print('❌ Erreur modification cotisation: $e');
     }
   }
 
@@ -193,8 +210,8 @@ class TontineProvider extends ChangeNotifier {
       _cotisations.removeWhere((c) => c.id == id);
       _error = null;
       notifyListeners();
-      await chargerStatistiques();
       await chargerTontines();
+      await chargerStatistiques();
     } catch (e) {
       _error = e.toString();
       notifyListeners();
@@ -205,17 +222,10 @@ class TontineProvider extends ChangeNotifier {
   Future<void> chargerStatistiques() async {
     try {
       final data = await ApiService.getStatistiques();
-      _statistiques = {
-        'totalTontines': data['totalTontines'] ?? 0,
-        'totalMembres': data['totalMembres'] ?? 0,
-        'totalCotisations': data['totalCotisations'] ?? 0,
-        'tauxParticipation': data['tauxParticipation'] ?? 0,
-      };
+      _statistiques = data;
       _error = null;
-      print('📊 Statistiques chargées: ${_statistiques}');
     } catch (e) {
       _error = e.toString();
-      print('❌ Erreur chargerStatistiques: $e');
     }
     notifyListeners();
   }

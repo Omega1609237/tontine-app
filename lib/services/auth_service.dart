@@ -32,7 +32,7 @@ class AuthService {
 
   Future<bool> register(String nom, String email, String password, {String role = 'membre'}) async {
     try {
-      // Passer le rôle à l'API
+      print('📝 AuthService.register - rôle: $role');
       final data = await ApiService.register(nom, email, password, null, role: role);
       if (data != null && data['user'] != null) {
         _currentUser = Utilisateur.fromJson(data['user']);

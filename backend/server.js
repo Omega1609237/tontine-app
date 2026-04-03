@@ -420,6 +420,116 @@ app.get('/api/statistiques', auth, async (req, res) => {
     }
 });
 
+// Mettre à jour une cotisation
+// Mettre à jour une cotisation
+app.put('/api/cotisations/:id', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { montant, mode_paiement, date_paiement } = req.body;
+
+        // Récupérer l'ancien montant
+        const oldCotisation = await pool.query(
+            'SELECT montant, tontine_id FROM cotisations WHERE id = $1',
+            [id]
+        );
+
+        if (oldCotisation.rows.length === 0) {
+            return res.status(404).json({ error: 'Cotisation non trouvée' });
+        }
+
+        const difference = montant - oldCotisation.rows[0].montant;
+
+        // Mettre à jour la cotisation
+        const result = await pool.query(
+            `UPDATE cotisations
+             SET montant = $1, mode_paiement = $2, date_paiement = $3
+             WHERE id = $4
+             RETURNING *`,
+            [montant, mode_paiement, date_paiement, id]
+        );
+
+        // Mettre à jour le montant total de la tontine
+        await pool.query(
+            'UPDATE tontines SET montant_total = montant_total + $1 WHERE id = $2',
+            [difference, oldCotisation.rows[0].tontine_id]
+        );
+
+        // Récupérer le nom du membre
+        const membre = await pool.query(
+            'SELECT nom, prenom FROM membres WHERE id = $1',
+            [result.rows[0].membre_id]
+        );
+
+        res.json({
+            ...result.rows[0],
+            membre_nom: `${membre.rows[0].prenom} ${membre.rows[0].nom}`
+        });
+    } catch (err) {
+        console.error('❌ Erreur PUT cotisation:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Créer le dossier uploads s'il n'existe pas
+const uploadDir = './uploads';
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+}
+
+// Configuration multer
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ storage: storage });
+
+// Servir les fichiers statiques
+app.use('/uploads', express.static('uploads'));
+
+// Upload d'image
+app.post('/api/upload', auth, upload.single('image'), (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'Aucun fichier' });
+        }
+        const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+        console.log('✅ Image uploadée:', imageUrl);
+        res.json({ imageUrl });
+    } catch (err) {
+        console.error('❌ Erreur upload:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Mettre à jour l'utilisateur
+app.put('/api/users/:id', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nom, email, telephone, photo_url } = req.body;
+
+        await pool.query(
+            'UPDATE utilisateurs SET nom = $1, email = $2, telephone = $3, photo_url = $4 WHERE id = $5',
+            [nom, email, telephone, photo_url, id]
+        );
+
+        console.log('✅ Utilisateur mis à jour:', id);
+        res.json({ message: 'Utilisateur mis à jour' });
+    } catch (err) {
+        console.error('❌ Erreur update:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Démarrer le serveur
 app.listen(port, () => {
     console.log(`🚀 Serveur démarré sur http://localhost:${port}`);
